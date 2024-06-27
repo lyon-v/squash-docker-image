@@ -84,7 +84,7 @@ Examples
 
 
 
-And we want to squash last 3 layers from the ``imagedemo:v1`` image:
+1.We want to squash last 3 layers from the ``imagedemo:v1`` image:
 
 
 
@@ -130,7 +130,10 @@ We can now confirm the layer structure:
     <missing>      2 years ago          /bin/sh -c #(nop) ADD file:5d68d27cc15a80653…   72.8MB   
 
 
-Let's squash all layers of the `imagedemo:v1` image into a single layer.:
+
+
+
+2.Let's squash all layers of the `imagedemo:v1` image into a single layer.:
 
 
     $ squash-docker-image -tag imagedemo:squashv1 -image imagedemo:v1
@@ -167,8 +170,20 @@ Let's squash all layers of the `imagedemo:v1` image into a single layer.:
 
 Let's confirm the image st [opensource](..\opensource) ructure now:
 
-::
-
     $ docker history imagedemo:squashv1
     IMAGE          CREATED              CREATED BY   SIZE      COMMENT
     22c61cd50250   About a minute ago                1.66GB    squash image
+
+
+## TODO
+
+- Compressing large images takes too long and needs optimization.
+- Currently, image files support OCI; more formats need to be supported.
+
+
+
+## Reference
+
+- [docker-squash](https://github.com/goldmann/docker-squash) - written in python
+- [docker-squash](https://github.com/jwilder/docker-squash) - written in go (not maintained)
+
