@@ -37,7 +37,6 @@ From source code
 Usage
 -----
 
-::
 
     $ squash-docker-image -help
     Usage of squash-docker-image:
@@ -69,8 +68,6 @@ Usage
 Examples
 --------
 
-::
-
     $ docker history imagedemo:v1
     IMAGE          CREATED        CREATED BY                                      SIZE      COMMENT
     475f688cd529   2 months ago   /usr/bin/supervisord -c /etc/supervisord.ini    1.5MB     build img
@@ -89,7 +86,7 @@ Examples
 
 And we want to squash last 3 layers from the ``imagedemo:v1`` image:
 
-::
+
 
     $ squash-docker-image  --from-layer 3 --tag imagedemo:squashv1 --image imagedemo:v1
     time="2024-06-27 20:08:28" level=info msg="Running version 1.0.0" func=run file="cli.go, line:66"
@@ -119,7 +116,6 @@ And we want to squash last 3 layers from the ``imagedemo:v1`` image:
 
 We can now confirm the layer structure:
 
-::
 
     $ docker history imagedemo:squashv1 
     IMAGE          CREATED              CREATED BY                                      SIZE      COMMENT
@@ -136,7 +132,6 @@ We can now confirm the layer structure:
 
 Let's squash all layers of the `imagedemo:v1` image into a single layer.:
 
-::
 
     $ squash-docker-image -tag imagedemo:squashv1 -image imagedemo:v1
     time="2024-06-27 21:09:07" level=info msg="Running version 1.0.0" func=run file="cli.go, line:66"
