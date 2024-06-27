@@ -6,7 +6,6 @@ Squash Docker OCI images to reduce the number of layers
 The problem
 -----------
 
-Docker 镜像的构建有很多种方式，比如通过 Dockerfile 和容器构建。无论哪种方式，最终生成的镜像通常会包含许多层。有时，这些层并非必要或希望出现在镜像中。例如，Dockerfile 中的 ADD 指令会创建一个包含特定文件的单层；或者通过容器构建镜像时会新增一个镜像单层。此外，镜像中可能存在临时文件，即使在下一层删除了这些文件，Docker 仍然会将这个不必要的层与镜像一起携带。通过容器构建镜像，然后将这个镜像启动为新容器，在新容器中进行包的安装或删除，重复这个过程也会导致镜像的层数增加。这些情况会浪费时间（需要推送、加载或保存更多数据）和资源（导致镜像更大）。 我们可以通过 squash-docker-image 来控制镜像的层数，避免不必要的层无限制地增加。
 
 There are many ways to build Docker images, such as using a Dockerfile or container-based builds. Regardless of the method, the resulting images typically contain many layers. Sometimes, these layers are neither necessary nor desired in the image. For example, the ADD instruction in a Dockerfile creates a layer containing specific files; or container-based builds may add a single layer to the image. Additionally, there may be temporary files within the image that, even if deleted in the next layer, Docker will still carry the unnecessary layer along with the image. Using container-based builds to create an image, then starting a new container from this image and performing package installations or deletions in the new container, and repeating this process, will also result in an increase in the number of layers. These situations waste time (more data to push, load, or save) and resources (leading to larger images).
 
@@ -14,16 +13,6 @@ Using squash-docker-image allows for effective management and reduction of image
 
 Features
 --------
-
-- 可以指定将镜压缩到一层
-
-  可以从选定的层开始挤压直到最后一层（不总是可行，这取决于镜像）
-
-  支持 Docker image v2或OCI标准格式的镜像
-
-  挤压后的镜像可以重新加载到 Docker 守护进程或存储为 tar 存档文件
-
-  
 
 - Allows compressing the image into a single layer
 - Can squash from a selected layer to the end (not always possible, depends on the image)
