@@ -19,7 +19,6 @@ type CLI struct {
 	Image      string
 	FromLayer  string
 	Tag        string
-	Force      bool
 	Message    string
 	Cleanup    bool
 	TmpDir     string
@@ -29,13 +28,11 @@ type CLI struct {
 
 // Squash represents the main structure to handle Docker image squashing.
 type Squash struct {
-	// log         *log.Logger
 	logs          *logrus.Logger
 	docker        *client.Client
 	image         string
 	fromLayer     string
 	tag           string
-	force         bool
 	comment       string
 	tmpDir        string
 	outputPath    string
@@ -78,7 +75,6 @@ func NewSquash(cli CLI, loggers *logrus.Logger) (*Squash, error) {
 		image:       cli.Image,
 		fromLayer:   cli.FromLayer,
 		tag:         cli.Tag,
-		force:       cli.Force,
 		comment:     cli.Message,
 		tmpDir:      cli.TmpDir,
 		outputPath:  cli.OutputPath,
@@ -122,7 +118,7 @@ func (s *Squash) Run() (string, error) {
 	var img ImageInterface
 	//留着拓展
 	if dockerAPIVersion.GreaterThanOrEqual(minVersion) {
-		img = NewV2Image(s)
+		img = NewOCIImage(s)
 	}
 	s.logs.Println("Squashing image:", s.image)
 	if s.outputPath != "" {

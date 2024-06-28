@@ -39,29 +39,43 @@ Usage
 
 
     $ squash-docker-image -help
-    Usage of squash-docker-image:
+      Usage of squash-docker-image:
+      -V    Show version and exit
+      -c    Remove source image from Docker after squashing
       -cleanup
-            Remove source image from Docker after squashing
-      -force
-            Force squash image if not match option
-      -from-layer string
-            Number of layers to squash or ID of the layer to squash from
-      -image string
-            Image to be squashed (required)
-      -load-image
-            Whether to load the image into Docker daemon after squashing (default true)
-      -message string
-            Specify a commit message for the new image (default "squash image")
-      -output-path string
-            Path where the image may be stored after squashing
-      -tag string
-            Specify the tag to be used for the new image
-      -tmp-dir string
+            Remove source image from Docker after squashing (shorthand: -c)
+      -d string
             Temporary directory to be created and used
+      -f string
+            Number of layers to squash or ID of the layer to squash from
+      -from-layer string
+            Number of layers to squash or ID of the layer to squash from (shorthand: -f)
+      -i string
+            Image to be squashed (required)
+      -image string
+            Image to be squashed (required) (shorthand: -i)
+      -l    Whether to load the image into Docker daemon after squashing (default true)
+      -load-image
+            Whether to load the image into Docker daemon after squashing (shorthand: -l) (default true)
+      -m string
+            Specify a commit message for the new image (default "squash image")
+      -message string
+            Specify a commit message for the new image (shorthand: -m) (default "squash image")
+      -o string
+            Path where the image may be stored after squashing
+      -output-path string
+            Path where the image may be stored after squashing (shorthand: -o)
+      -t string
+            Specify the tag to be used for the new image
+      -tag string
+            Specify the tag to be used for the new image (shorthand: -t)
+      -tmp-dir string
+            Temporary directory to be created and used (shorthand: -d)
+      -v    Verbose output
       -verbose
-            Verbose output
+            Verbose output (shorthand: -v)
       -version
-            Show version and exit
+            Show version and exit (shorthand: -V)
 
 
 

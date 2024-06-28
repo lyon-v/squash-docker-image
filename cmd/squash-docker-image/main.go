@@ -13,74 +13,79 @@ import (
 )
 
 // Version of the application, should be set during build
-var Version string = "1.0.0"
+var Version = "1.0.0"
 
-// CLI holds the command line arguments
-
-func run() {
+func main() {
+	// Parse CLI arguments
 	cli := image.CLI{}
-	flag.BoolVar(&cli.Verbose, "verbose", false, "Verbose output")
-	flag.BoolVar(&cli.Version, "version", false, "Show version and exit")
-	flag.StringVar(&cli.Image, "image", "", "Image to be squashed (required)")
-	flag.StringVar(&cli.FromLayer, "from-layer", "", "Number of layers to squash or ID of the layer to squash from")
-	flag.StringVar(&cli.Tag, "tag", "", "Specify the tag to be used for the new image")
-	flag.BoolVar(&cli.Force, "force", false, "Force squash image if not match option")
-	flag.StringVar(&cli.Message, "message", "squash image", "Specify a commit message for the new image")
-	flag.BoolVar(&cli.Cleanup, "cleanup", false, "Remove source image from Docker after squashing")
-	flag.StringVar(&cli.TmpDir, "tmp-dir", "", "Temporary directory to be created and used")
-	flag.StringVar(&cli.OutputPath, "output-path", "", "Path where the image may be stored after squashing")
-	flag.BoolVar(&cli.LoadImage, "load-image", true, "Whether to load the image into Docker daemon after squashing")
-
+	flag.BoolVar(&cli.Verbose, "verbose", false, "Verbose output (shorthand: -v)")
+	flag.BoolVar(&cli.Verbose, "v", false, "Verbose output")
+	flag.BoolVar(&cli.Version, "version", false, "Show version and exit (shorthand: -V)")
+	flag.BoolVar(&cli.Version, "V", false, "Show version and exit")
+	flag.StringVar(&cli.Image, "image", "", "Image to be squashed (required) (shorthand: -i)")
+	flag.StringVar(&cli.Image, "i", "", "Image to be squashed (required)")
+	flag.StringVar(&cli.FromLayer, "from-layer", "", "Number of layers to squash or ID of the layer to squash from (shorthand: -f)")
+	flag.StringVar(&cli.FromLayer, "f", "", "Number of layers to squash or ID of the layer to squash from")
+	flag.StringVar(&cli.Tag, "tag", "", "Specify the tag to be used for the new image (shorthand: -t)")
+	flag.StringVar(&cli.Tag, "t", "", "Specify the tag to be used for the new image")
+	flag.StringVar(&cli.Message, "message", "squash image", "Specify a commit message for the new image (shorthand: -m)")
+	flag.StringVar(&cli.Message, "m", "squash image", "Specify a commit message for the new image")
+	flag.BoolVar(&cli.Cleanup, "cleanup", false, "Remove source image from Docker after squashing (shorthand: -c)")
+	flag.BoolVar(&cli.Cleanup, "c", false, "Remove source image from Docker after squashing")
+	flag.StringVar(&cli.TmpDir, "tmp-dir", "", "Temporary directory to be created and used (shorthand: -d)")
+	flag.StringVar(&cli.TmpDir, "d", "", "Temporary directory to be created and used")
+	flag.StringVar(&cli.OutputPath, "output-path", "", "Path where the image may be stored after squashing (shorthand: -o)")
+	flag.StringVar(&cli.OutputPath, "o", "", "Path where the image may be stored after squashing")
+	flag.BoolVar(&cli.LoadImage, "load-image", true, "Whether to load the image into Docker daemon after squashing (shorthand: -l)")
+	flag.BoolVar(&cli.LoadImage, "l", true, "Whether to load the image into Docker daemon after squashing")
 	flag.Parse()
 
-	loggers := logrus.New()
-	loggers.SetLevel(logrus.InfoLevel)
-	loggers.SetReportCaller(true)
-	loggers.SetFormatter(&logrus.TextFormatter{
+	// Initialize logger
+	logger := logrus.New()
+	logger.SetReportCaller(true)
+	logger.SetFormatter(&logrus.TextFormatter{
 		DisableColors:   true,
 		TimestampFormat: "2006-01-02 15:03:04",
-		CallerPrettyfier: func(frame *runtime.Frame) (function string, file string) {
-			fileName := fmt.Sprintf("%s, line:%d", path.Base(frame.File), frame.Line)
-			funcs := strings.Split(frame.Function, ".")
-			strfuncs := funcs[len(funcs)-1]
-			return strfuncs, fileName
+		CallerPrettyfier: func(frame *runtime.Frame) (string, string) {
+			return fmt.Sprintf("%s", strings.Split(frame.Function, ".")[len(strings.Split(frame.Function, "."))-1]),
+				fmt.Sprintf("%s, line:%d", path.Base(frame.File), frame.Line)
 		},
 	})
 
+	// Handle version flag
 	if cli.Version {
-		loggers.Info(Version)
-		os.Exit(0)
+		fmt.Println("Version:", Version)
+		return
 	}
 
+	// Validate required flags
 	if cli.Image == "" {
-		loggers.Info("Error: Image is required")
+		logger.Error("Image is required")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
+	// Set log level
 	if cli.Verbose {
-		loggers.SetLevel(logrus.DebugLevel)
-		loggers.Info("Verbose mode enabled")
+		logger.SetLevel(logrus.DebugLevel)
+		logger.Debug("Verbose mode enabled")
+	} else {
+		logger.SetLevel(logrus.InfoLevel)
 	}
 
-	loggers.Infof("Running version %s", Version)
+	logger.Infof("Running version %s", Version)
 
-	// Here you would integrate the actual squashing logic, possibly
-	// using a function or a package dedicated to squashing Docker images
-	// e.g., squash.SquashImage(cli)
-
-	squash, err := image.NewSquash(cli, loggers)
+	// Create Squash instance
+	squash, err := image.NewSquash(cli, logger)
 	if err != nil {
-		loggers.Fatal("error: ", err)
+		logger.Fatalf("Failed to create Squash instance: %v", err)
 	}
+
+	// Run squash process
 	newImageId, err := squash.Run()
 	if err != nil {
-		loggers.Fatal("error: ", err)
+		logger.Fatalf("Squash process failed: %v", err)
 	}
-	fmt.Printf("suqashed imageId: [%s] \n", newImageId)
 
-}
-
-func main() {
-	run()
+	fmt.Printf("Squashed image ID: [%s]\n", newImageId)
 }
