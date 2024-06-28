@@ -18,7 +18,7 @@ RUN go mod download
 COPY . .
 
 # Compile the Go program, outputting the binary file to /app/bin/cli
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -o squash-docker-image cmd/squash-docker-image/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -o squash-docker-image main.go
 
 # Use the official Debian base image as the final base image
 FROM alpine:3.14

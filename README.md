@@ -26,16 +26,23 @@ Features
 Installation
 ------------
 
-From source code
+- From source code
 
-    go build -o squash-docker-image cmd/squash-docker-image/main.go
-    
-    cp squash-docker-image /usr/local/bin/
+   ```
+  go build -o squash-docker-image cmd/squash-docker-image/main.go
+  
+  cp squash-docker-image /usr/local/bin/
+   ```
 
-To install this project, use the following command:
+  
 
-      ```sh
-      go install github.com/lyon-v/squash-docker-image@latest
+- To install this project, use the following command:
+
+  ```
+  go install github.com/lyon-v/squash-docker-image@latest
+  ```
+
+  
 
 
 Usage
