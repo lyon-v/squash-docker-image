@@ -9,9 +9,6 @@ require (
 	golang.org/x/net v0.26.0
 )
 
-// Ensure the internal/image package is properly referenced
-replace github.com/lyon-v/squash-docker-image/internal/image => ./internal/image
-
 require (
 	github.com/Microsoft/go-winio v0.4.14 // indirect
 	github.com/containerd/log v0.1.0 // indirect
