@@ -32,6 +32,10 @@ From source code
     
     cp squash-docker-image /usr/local/bin/
 
+To install this project, use the following command:
+
+      ```sh
+      go install github.com/lyon-v/squash-docker-image@latest
 
 
 Usage

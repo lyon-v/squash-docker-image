@@ -1,4 +1,4 @@
-module squash-docker-image
+module github.com/lyon-v/squash-docker-image
 
 go 1.20
 
