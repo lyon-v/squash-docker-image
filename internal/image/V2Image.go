@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,15 +21,17 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type OCIImage struct {
+type V2Image struct {
 	ImageSpec                   // Embedding V1Image to reuse fields
 	DockerClient *client.Client // Placeholder for Docker client
 	Logger       *logrus.Logger
+	TmpLayerDir  string
+	MergeDir     string
 }
 
 // NewImage creates a new instance of Image with provided parameters.
-func NewOCIImage(s *Squash) *OCIImage {
-	return &OCIImage{
+func NewV2Image(s *Squash) *V2Image {
+	return &V2Image{
 		ImageSpec: ImageSpec{
 			Image:     s.image,
 			Tag:       s.tag,
@@ -44,11 +47,11 @@ func NewOCIImage(s *Squash) *OCIImage {
 	}
 }
 
-func (oim *OCIImage) Format() string {
+func (oim *V2Image) Format() string {
 	return "oci"
 }
 
-func (oim *OCIImage) Squash() (string, error) {
+func (oim *V2Image) Squash() (string, error) {
 	// Implementation for oim
 	if err := oim.beforeSquashing(); err != nil {
 		return "", err
@@ -63,7 +66,7 @@ func (oim *OCIImage) Squash() (string, error) {
 	return ret, nil
 }
 
-func (im *OCIImage) afterSquashing() error {
+func (im *V2Image) afterSquashing() error {
 
 	var err error
 	im.Logger.Info("Removing from disk already squashed layers...")
@@ -89,7 +92,7 @@ func (im *OCIImage) afterSquashing() error {
 	return nil
 }
 
-func (im *OCIImage) squash() (string, error) {
+func (im *V2Image) squash() (string, error) {
 
 	if len(im.LayerPathsToSquash) != 0 {
 		os.Mkdir(im.SquashedDir, os.ModePerm)
@@ -106,7 +109,7 @@ func (im *OCIImage) squash() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// imageID := im.writeImageMetadata(metaData)
+
 	imageID := im.writeImageMetadata(metaData)
 	if len(im.LayerPathsToSquash) != 0 {
 		layerPathID, err = im.generateSquashedLayerPathId()
@@ -134,13 +137,11 @@ func (im *OCIImage) squash() (string, error) {
 			return "", err
 		}
 
-		// 计算新的路径
 		destPath := filepath.Join(im.NewImageDir, layerPathID)
 
-		// 移动目录
+		// Move directory
 		err := os.Rename(im.SquashedDir, destPath)
 		if err != nil {
-			// log.Fatalf("Failed to move directory from %s to %s: %v", im.SquashedDir, destPath, err)
 			im.Logger.Errorf("Failed to move directory from %s to %s: %v", im.SquashedDir, destPath, err)
 			return "", err
 		}
@@ -167,131 +168,211 @@ func (im *OCIImage) squash() (string, error) {
 
 }
 
-func (im *OCIImage) squashLayers() error {
-	// 初始化要合并的层和要移动的层
-	layersToSquash := im.LayerPathsToSquash
-	// layersToMove := im.LayerPathsToMove
-	oldImageDir := im.OldImageDir
-	squashedTarPath := im.SquashedTar
-	ociFormat := im.OCIFormat
+func (im *V2Image) squashLayers() {
+	im.Logger.Info("Starting squashing...")
+	im.TmpLayerDir = filepath.Join(filepath.Dir(im.SquashedTar), "tmpdir")
+	im.MergeDir = filepath.Join(filepath.Dir(im.SquashedTar), "mergedir")
 
-	fmt.Printf("Starting squashing for %s...\n", squashedTarPath)
-
-	// 反转需要合并的层的顺序
-	ReverseList(layersToSquash)
-
-	// 创建存放合并层的 tar 文件
-	squashedFile, err := os.Create(squashedTarPath)
-	if err != nil {
-		return err
+	if PathExists(im.TmpLayerDir) {
+		os.RemoveAll(im.TmpLayerDir)
 	}
-	defer squashedFile.Close()
+	if PathExists(im.MergeDir) {
+		os.RemoveAll(im.MergeDir)
+	}
+	os.MkdirAll(im.MergeDir, 0755)
+	os.MkdirAll(im.TmpLayerDir, 0755)
 
-	squashedTar := tar.NewWriter(squashedFile)
-	defer squashedTar.Close()
-
-	// 初始化变量
-	toSkip := []string{}
-	squashedFiles := map[string]bool{}
-	opaqueDirs := []string{}
-
-	for _, layerID := range layersToSquash {
-		layerTarFile := filepath.Join(oldImageDir, layerID)
-		if !ociFormat {
-			layerTarFile = filepath.Join(layerTarFile, "layer.tar")
+	for i, layerID := range im.LayerPathsToSquash {
+		im.Logger.Infof("Squashing file '%s'...", layerID)
+		layerTarFile := filepath.Join(im.OldImageDir, layerID)
+		if !im.OCIFormat {
+			layerTarFile = filepath.Join(im.OldImageDir, layerID, "layer.tar")
 		}
-		fmt.Printf("Squashing file '%s'...\n", layerTarFile)
-
-		layerTarReader, layerFile, err := openTarFile(layerTarFile)
-		if err != nil {
-			return err
-		}
-		defer layerFile.Close()
-
-		layerOpaqueDirs := []string{}
-
-		for {
-			header, err := layerTarReader.Next()
-			if err == io.EOF {
-				break
-			}
+		if i == 0 {
+			_, err := ExtractTar(layerTarFile, im.MergeDir)
 			if err != nil {
-				return err
+				log.Fatalf("Error extracting tar file: %v", err)
 			}
+			continue
+		}
+		os.RemoveAll(im.TmpLayerDir)
+		os.MkdirAll(im.TmpLayerDir, 0755)
+		_, err := ExtractTar(layerTarFile, im.TmpLayerDir)
+		if err != nil {
+			log.Fatalf("Error extracting tar file: %v", err)
+		}
 
-			normalizedName := normPath(header.Name)
-			if strings.Contains(header.Name, ".wh.") {
-				if strings.HasSuffix(header.Name, ".wh..wh..opq") {
-					opaqueDir := filepath.Dir(header.Name)
-					layerOpaqueDirs = append(layerOpaqueDirs, opaqueDir)
-					if !anyPrefix(opaqueDirs, opaqueDir) {
-						if err := squashedTar.WriteHeader(header); err != nil {
-							return err
-						}
-						if _, err := io.Copy(squashedTar, layerTarReader); err != nil {
-							return err
-						}
-					}
+		// Traverse the im.TmpLayerDir directory, saving files into whfiles and refiles.
+		whfiles, refiles, err := GetWhiteoutAndRegularFiles(im.TmpLayerDir)
+		if err != nil {
+			log.Fatalf("Error getting whiteout and regular files: %v", err)
+		}
+
+		layerRecords := make(map[string]int)
+
+		// And first process the files that start with .wh.
+		for _, file := range whfiles {
+			name := file.Info.Name()
+
+			dirpath1 := NormalizePath(filepath.Dir(file.Path))
+
+			if name == ".wh..wh..opq" {
+				dirpath2 := filepath.Join(im.MergeDir, dirpath1[len(im.TmpLayerDir):])
+				if flag, _ := HasFiles(dirpath2); flag {
+					os.RemoveAll(dirpath2)
 				} else {
-					toSkip = append(toSkip, normPath(strings.Replace(header.Name, ".wh.", "", 1)))
+					CopyFile(file.Path, filepath.Join(dirpath2, name), layerRecords)
 				}
-				continue
-			}
 
-			if anyPrefix(opaqueDirs, normalizedName) {
-				continue
-			}
-
-			if anyPrefix(toSkip, normalizedName) {
-				continue
-			}
-
-			if squashedFiles[normalizedName] {
-				continue
-			}
-
-			if err := squashedTar.WriteHeader(header); err != nil {
-				return err
-			}
-			if header.Typeflag == tar.TypeReg {
-				if _, err := io.Copy(squashedTar, layerTarReader); err != nil {
-					return err
+			} else if strings.HasPrefix(name, ".wh.") {
+				destpath := filepath.Join(im.MergeDir, dirpath1[len(im.TmpLayerDir):], name[len(".wh."):])
+				if PathExists(destpath) {
+					os.RemoveAll(destpath)
+				} else {
+					CopyFile(filepath.Join(dirpath1, name), destpath, layerRecords)
 				}
 			}
-			squashedFiles[normalizedName] = true
+		}
+		for _, file := range refiles {
+			sourcePath := NormalizePath(file.Path)
+
+			destPath := filepath.Join(im.MergeDir, file.Path[len(im.TmpLayerDir):])
+
+			_, err := im.Copy(sourcePath, destPath, layerRecords)
+			if err != nil {
+				log.Fatalf("Error Copying file: %s , %v", sourcePath, err)
+			}
+
 		}
 
-		opaqueDirs = append(opaqueDirs, layerOpaqueDirs...)
 	}
 
-	fmt.Println("Squashing finishing!")
-	return nil
-}
-
-// 帮助函数，用于处理路径、打开 tar 文件等
-func normPath(name string) string {
-	return filepath.Clean("/" + name)
-}
-
-func openTarFile(filePath string) (*tar.Reader, *os.File, error) {
-	file, err := os.Open(filePath)
+	// Package the im.MergeDir directory into a tar file.
+	err := CreateTar(im.MergeDir, im.SquashedTar)
 	if err != nil {
-		return nil, nil, err
+		log.Fatalf("Error creating tar file: %v", err)
 	}
-	tarReader := tar.NewReader(file)
-	return tarReader, file, nil
+
+	os.RemoveAll(im.TmpLayerDir)
+	os.RemoveAll(im.MergeDir)
+
+	im.Logger.Info("Squash finished...")
 }
 
-func anyPrefix(slice []string, prefix string) bool {
-	for _, s := range slice {
-		if strings.HasPrefix(s, prefix) {
-			return true
+// Main Copy function
+func (im *V2Image) Copy(src, dest string, records map[string]int) (int, error) {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return 0, err
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		return im.CopySymlink(src, dest, records)
+	} else if info.IsDir() {
+		return im.CopyDir(src, dest, records)
+	} else {
+		return CopyFile(src, dest, records)
+	}
+}
+
+// Helper function to Copy a symlink from src to dest
+func (im *V2Image) CopySymlink(src, dest string, records map[string]int) (int, error) {
+
+	linkTarget, err := os.Readlink(src)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read symlink: %w", err)
+	}
+	absSrcDir := filepath.Dir(src)
+	absDestDir := filepath.Dir(dest)
+	var absLinkTarget string
+	var desLinkTarget string
+	absLinkTarget = filepath.Join(im.TmpLayerDir, linkTarget)
+	desLinkTarget = filepath.Join(im.MergeDir, linkTarget)
+
+	if !PathExists(absLinkTarget) {
+		absLinkTarget = filepath.Join(absSrcDir, linkTarget)
+		desLinkTarget = filepath.Join(absDestDir, linkTarget)
+	}
+
+	if strings.Contains(absLinkTarget, "etc/alternatives/pager") {
+		fmt.Print("")
+	}
+	if !PathExists(absLinkTarget) {
+		CreateSymlink(linkTarget, dest)
+		return 0, nil
+	}
+
+	records[src] += 1
+
+	linkTargetInfo, err := os.Lstat(absLinkTarget)
+	if err != nil {
+		return 0, fmt.Errorf("failed to stat symlink target: %w", err)
+	}
+
+	var i int
+	if linkTargetInfo.Mode()&os.ModeSymlink != 0 {
+		// Recursively handle the nested symlink
+		i, err = im.CopySymlink(absLinkTarget, desLinkTarget, records)
+	} else if linkTargetInfo.IsDir() {
+		// If the target is a directory, Copy the directory structure
+		i, err = im.CopyDir(absLinkTarget, desLinkTarget, records)
+	} else {
+		// If the target is a file, Copy the file
+		i, err = CopyFile(absLinkTarget, desLinkTarget, records)
+	}
+	if err != nil {
+		return i, err
+	}
+
+	return i + 1, CreateSymlink(linkTarget, dest)
+
+}
+
+// Function to recursively Copy a directory
+func (im *V2Image) CopyDir(src, dest string, records map[string]int) (count int, err error) {
+
+	if _, ok := records[src]; ok {
+		return 1, nil
+	}
+
+	dirs, err := os.ReadDir(src)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read source directory: %w", err)
+	}
+
+	if err := os.MkdirAll(dest, 0755); err != nil {
+		return 0, fmt.Errorf("failed to create destination directory: %w", err)
+	}
+
+	for _, dir := range dirs {
+		srcPath := filepath.Join(src, dir.Name())
+		destPath := filepath.Join(dest, dir.Name())
+
+		if dir.IsDir() {
+			countSub, err := im.CopyDir(srcPath, destPath, records)
+			if err != nil {
+				return 0, err
+			}
+			count += countSub
+		} else if dir.Type()&os.ModeSymlink != 0 {
+			countSub, err := im.CopySymlink(srcPath, destPath, records)
+			if err != nil {
+				return 0, err
+			}
+			count += countSub
+		} else {
+			countSub, err := CopyFile(srcPath, destPath, records)
+			if err != nil {
+				return 0, err
+			}
+			count += countSub
 		}
 	}
-	return false
+	records[src] += 1
+	return count, nil
 }
 
-func (im *OCIImage) writeVersionFile(squashedDir string) error {
+func (im *V2Image) writeVersionFile(squashedDir string) error {
 	versionFile := filepath.Join(squashedDir, "VERSION")
 
 	// Open the file for writing, create it if not exist, and truncate it if it exists
@@ -309,7 +390,7 @@ func (im *OCIImage) writeVersionFile(squashedDir string) error {
 	return nil
 }
 
-func (im *OCIImage) writeSquashedLayerMetadata(metaData *ImageConfig) {
+func (im *V2Image) writeSquashedLayerMetadata(metaData *ImageConfig) {
 
 	layerMetadataFile := filepath.Join(im.SquashedDir, "json")
 
@@ -323,7 +404,7 @@ func (im *OCIImage) writeSquashedLayerMetadata(metaData *ImageConfig) {
 
 }
 
-func (im *OCIImage) generateRepositoriesJson(repositoriesFile, repositoryImageId string) error {
+func (im *V2Image) generateRepositoriesJson(repositoriesFile, repositoryImageId string) error {
 	if len(repositoryImageId) == 0 {
 		return fmt.Errorf("Provided image id cannot be null")
 	}
@@ -362,7 +443,7 @@ func (im *OCIImage) generateRepositoriesJson(repositoriesFile, repositoryImageId
 
 }
 
-func (im *OCIImage) moveLayers() error {
+func (im *V2Image) moveLayers() error {
 	for _, layer := range im.LayerPathsToMove {
 		layerID := strings.Replace(layer, "sha256:", "", -1)
 		im.Logger.Debugf("Moving unmodified layer '%s'...", layerID)
@@ -379,12 +460,11 @@ func (im *OCIImage) moveLayers() error {
 	return nil
 }
 
-func (im *OCIImage) writeManifestMetadata(manifest ImageManifest) error {
+func (im *V2Image) writeManifestMetadata(manifest ImageManifest) error {
 
 	manifestFile := filepath.Join(im.NewImageDir, "manifest.json")
 
 	manifests := []ImageManifest{}
-	// 打开一个文件用于写入
 
 	manifests = append(manifests, manifest)
 	file, err := os.Create(manifestFile)
@@ -393,8 +473,6 @@ func (im *OCIImage) writeManifestMetadata(manifest ImageManifest) error {
 		return err
 	}
 	defer file.Close()
-
-	// 创建一个json.Encoder对象，并使用它来编码
 	encoder := json.NewEncoder(file)
 	if err := encoder.Encode(manifests); err != nil {
 		im.Logger.Errorf("Error encoding JSON:", err)
@@ -404,8 +482,7 @@ func (im *OCIImage) writeManifestMetadata(manifest ImageManifest) error {
 
 }
 
-func (im *OCIImage) generateManifestMetadata(imageID string, layerPathID string) ImageManifest {
-	// manifest := make(map[string]interface{})
+func (im *V2Image) generateManifestMetadata(imageID string, layerPathID string) ImageManifest {
 
 	manifest := ImageManifest{}
 	manifest.Config = fmt.Sprintf("%s.json", imageID)
@@ -432,7 +509,7 @@ func (im *OCIImage) generateManifestMetadata(imageID string, layerPathID string)
 
 }
 
-func (im *OCIImage) generateLastLayerMetadata(layerPathID, oldLayerPath string) (*ImageConfig, error) {
+func (im *V2Image) generateLastLayerMetadata(layerPathID, oldLayerPath string) (*ImageConfig, error) {
 	configFilePath := filepath.Join(im.OldImageDir, oldLayerPath)
 
 	// Read the JSON configuration file
@@ -473,7 +550,7 @@ func (im *OCIImage) generateLastLayerMetadata(layerPathID, oldLayerPath string) 
 	return &imConfig, nil
 }
 
-func (im *OCIImage) generateSquashedLayerPathId() (string, error) {
+func (im *V2Image) generateSquashedLayerPathId() (string, error) {
 
 	// Copy and update the old image configuration
 	v1Metadata := im.OldImageConfig
@@ -521,7 +598,7 @@ func (im *OCIImage) generateSquashedLayerPathId() (string, error) {
 	return sha, nil
 }
 
-func (im *OCIImage) writeImageMetadata(metaData *ImageConfig) string {
+func (im *V2Image) writeImageMetadata(metaData *ImageConfig) string {
 
 	// jsonMetadata, imageId := im.dumpJson(metadata, true)
 	jsonData, err := json.Marshal(metaData)
@@ -547,7 +624,7 @@ func (im *OCIImage) writeImageMetadata(metaData *ImageConfig) string {
 
 }
 
-func (im *OCIImage) writeJsonMetadata(metadata string, metadataFile string) error {
+func (im *V2Image) writeJsonMetadata(metadata string, metadataFile string) error {
 	file, err := os.OpenFile(metadataFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err // return the error to be handled by the caller
@@ -564,7 +641,7 @@ func (im *OCIImage) writeJsonMetadata(metadata string, metadataFile string) erro
 
 }
 
-func (im *OCIImage) generateImageMetadata() (*ImageConfig, error) {
+func (im *V2Image) generateImageMetadata() (*ImageConfig, error) {
 
 	// Deep copy the old image config to metadata
 	metadata := &ImageConfig{
@@ -617,13 +694,13 @@ func (im *OCIImage) generateImageMetadata() (*ImageConfig, error) {
 	return metadata, nil
 }
 
-func (im *OCIImage) generateChainIds(diffIDs []string) []string {
+func (im *V2Image) generateChainIds(diffIDs []string) []string {
 	var chainIDs []string
 	im.generateChainId(&chainIDs, diffIDs, "")
 	return chainIDs
 }
 
-func (im *OCIImage) generateChainId(chainIDs *[]string, diffIDs []string, parentChainID string) []string {
+func (im *V2Image) generateChainId(chainIDs *[]string, diffIDs []string, parentChainID string) []string {
 	if parentChainID == "" {
 		return im.generateChainId(chainIDs, diffIDs[1:], diffIDs[0])
 	}
@@ -642,14 +719,14 @@ func (im *OCIImage) generateChainId(chainIDs *[]string, diffIDs []string, parent
 	return im.generateChainId(chainIDs, diffIDs[1:], digest)
 }
 
-func (im *OCIImage) extractTarName(path string) string {
+func (im *V2Image) extractTarName(path string) string {
 	if im.OCIFormat {
 		return filepath.Join(im.OldImageDir, path)
 	}
 	return filepath.Join(im.OldImageDir, path, "layer.tar")
 }
 
-func (im *OCIImage) generateDiffIds() []string {
+func (im *V2Image) generateDiffIds() []string {
 	var diffIDs []string
 
 	for _, path := range im.LayerPathsToMove {
@@ -672,7 +749,7 @@ func (im *OCIImage) generateDiffIds() []string {
 	return diffIDs
 }
 
-func (im *OCIImage) computeSha256(filePath string) (string, error) {
+func (im *V2Image) computeSha256(filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", err
@@ -698,7 +775,7 @@ func (im *OCIImage) computeSha256(filePath string) (string, error) {
 	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
 }
 
-func (im *OCIImage) isInOpaqueDirs(name string, opaqueDirs []string) bool {
+func (im *V2Image) isInOpaqueDirs(name string, opaqueDirs []string) bool {
 	for _, opaqueDir := range opaqueDirs {
 		if strings.HasPrefix(name, opaqueDir) {
 			return true
@@ -707,12 +784,12 @@ func (im *OCIImage) isInOpaqueDirs(name string, opaqueDirs []string) bool {
 	return false
 }
 
-func (im *OCIImage) Cleanup() error {
+func (im *V2Image) Cleanup() error {
 	im.Logger.Infof("Cleaning up %s temporary directory", im.TmpDir)
 	return os.RemoveAll(im.TmpDir)
 }
 
-func (im *OCIImage) initializeDirectories() error {
+func (im *V2Image) initializeDirectories() error {
 
 	if err := im.prepareTmpDirectory(); err != nil {
 		return err
@@ -734,7 +811,7 @@ func (im *OCIImage) initializeDirectories() error {
 	return nil
 }
 
-func (im *OCIImage) squashId(layer string) (string, error) {
+func (im *V2Image) squashId(layer string) (string, error) {
 	if layer == "<missing>" {
 		im.Logger.Info("You try to squash from layer that does not have it's own ID, we'll try to find it later")
 	}
@@ -747,7 +824,7 @@ func (im *OCIImage) squashId(layer string) (string, error) {
 	return imageInfo.ID, nil
 }
 
-func (oim *OCIImage) validateNumberofLayers(number_of_layers int) error {
+func (oim *V2Image) validateNumberofLayers(number_of_layers int) error {
 	//Makes sure that the specified number of layers to squash is a valid number
 
 	if number_of_layers <= 0 {
@@ -761,7 +838,7 @@ func (oim *OCIImage) validateNumberofLayers(number_of_layers int) error {
 
 }
 
-func (im *OCIImage) beforeSquashing() error {
+func (im *V2Image) beforeSquashing() error {
 
 	if err := im.initializeDirectories(); err != nil {
 		return err
@@ -857,7 +934,7 @@ func (im *OCIImage) beforeSquashing() error {
 
 }
 
-func (oim *OCIImage) readLayerPaths() error {
+func (oim *V2Image) readLayerPaths() error {
 
 	var currentManifestLayer int
 
@@ -891,7 +968,7 @@ func (oim *OCIImage) readLayerPaths() error {
 // getManifest checks for the presence of "index.json" to determine if it's an OCI format.
 // tries to load "manifest.json".
 
-func (oim *OCIImage) getManifest() error {
+func (oim *V2Image) getManifest() error {
 	indexPath := filepath.Join(oim.OldImageDir, "index.json")
 	manifestPath := filepath.Join(oim.OldImageDir, "manifest.json")
 
@@ -918,7 +995,7 @@ func (oim *OCIImage) getManifest() error {
 
 }
 
-func (oim *OCIImage) getIamgeConfig() error {
+func (oim *V2Image) getIamgeConfig() error {
 
 	configPath := filepath.Join(oim.OldImageDir, oim.OldManifest.Config)
 
@@ -933,7 +1010,7 @@ func (oim *OCIImage) getIamgeConfig() error {
 	return nil
 }
 
-func (oim *OCIImage) dirSize(directory string) (int64, error) {
+func (oim *V2Image) dirSize(directory string) (int64, error) {
 
 	var size int64
 
@@ -957,7 +1034,7 @@ func (oim *OCIImage) dirSize(directory string) (int64, error) {
 	return size, nil
 }
 
-func (im *OCIImage) saveImage() error {
+func (im *V2Image) saveImage() error {
 	//Saves the image as a tar archive under specified name
 
 	for i := 0; i < 3; i++ {
@@ -985,7 +1062,7 @@ func (im *OCIImage) saveImage() error {
 }
 
 // extractTar extracts a tar archive to a specified directory
-func (oim *OCIImage) extractTar(tarReader io.Reader, directory string) error {
+func (oim *V2Image) extractTar(tarReader io.Reader, directory string) error {
 	tarBallReader := tar.NewReader(tarReader)
 
 	for {
@@ -1046,28 +1123,25 @@ func mkdev(major, minor int64) uint32 {
 	return uint32((major << 8) | (minor & 0xff) | ((minor & 0xfff00) << 12))
 }
 
-func (oim *OCIImage) parseImageName() {
+func (oim *V2Image) parseImageName() {
 	//Parses the provided image name and splits it in the name and tag part, if possible. If no tag is provided  'latest' is used.
-	// 检查镜像名称中是否包含":"
 	colonIndex := strings.LastIndex(oim.Tag, ":")
 	if colonIndex > -1 && !strings.Contains(oim.Tag[colonIndex:], "/") {
-		// 如果":"后面没有"/"，则认为":"后面的是标签
 		oim.ImageName = oim.Tag[:colonIndex]
 		oim.ImageTag = oim.Tag[colonIndex+1:]
 	} else {
-		// 如果不包含":"或者":"后面直接跟了"/"，则使用默认标签"latest"
 		oim.ImageName = oim.Tag
 		oim.ImageTag = "latest"
 	}
 
 }
 
-func (im *OCIImage) prepareTmpDirectory() error {
+func (im *V2Image) prepareTmpDirectory() error {
 	// Creates temporary directory that is used to work on layers
 
 	if len(im.TmpDir) != 0 {
 		if _, err := os.Stat(im.TmpDir); !os.IsNotExist(err) {
-			// 如果目录已存在，则返回错误
+
 			return fmt.Errorf("the '%s' directory already exists, please remove it before you proceed", im.TmpDir)
 		}
 		if err := os.MkdirAll(im.TmpDir, os.ModePerm); err != nil {
@@ -1085,13 +1159,12 @@ func (im *OCIImage) prepareTmpDirectory() error {
 	return nil
 }
 
-func (im *OCIImage) readLayers(imageID string) error {
+func (im *V2Image) readLayers(imageID string) error {
 
 	history, err := im.DockerClient.ImageHistory(context.Background(), imageID)
 	if err != nil {
 		return err
 	}
-	// 遍历镜像的历史记录，并输出每一层的ID
 	count := 0
 	for _, layer := range history {
 		im.OldImageLayers = append(im.OldImageLayers, layer.ID)
@@ -1105,7 +1178,7 @@ func (im *OCIImage) readLayers(imageID string) error {
 	return nil
 }
 
-func (im *OCIImage) LoadSquashedImage() error {
+func (im *V2Image) LoadSquashedImage() error {
 
 	tarFile := filepath.Join(im.TmpDir, "image.tar")
 
@@ -1139,7 +1212,7 @@ func (im *OCIImage) LoadSquashedImage() error {
 
 }
 
-func (im *OCIImage) tarImage(targetTarFile, directory string) error {
+func (im *V2Image) tarImage(targetTarFile, directory string) error {
 	file, err := os.Create(targetTarFile)
 	if err != nil {
 		return fmt.Errorf("error creating tar file: %v", err)
@@ -1187,7 +1260,7 @@ func (im *OCIImage) tarImage(targetTarFile, directory string) error {
 	})
 }
 
-func (im *OCIImage) ExportTarArchive(outputPath string) error {
+func (im *V2Image) ExportTarArchive(outputPath string) error {
 
 	if err := im.tarImage(outputPath, im.NewImageDir); err != nil {
 		return err

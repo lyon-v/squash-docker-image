@@ -1,7 +1,7 @@
 ``squash-docker-image``
 ==================
 
-Squash Docker OCI images to reduce the number of layers
+Squash Docker OCI images and docker v2image to reduce the number of layers
 
 The problem
 -----------

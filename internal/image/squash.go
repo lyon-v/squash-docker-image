@@ -47,7 +47,7 @@ func NewSquash(cli CLI, loggers *logrus.Logger) (*Squash, error) {
 
 	if loggers == nil {
 		loggers := logrus.New()
-		// 可以从环境变量读取或者直接指定日志级别
+
 		if os.Getenv("DEBUG") == "true" {
 			loggers.SetLevel(logrus.DebugLevel)
 		} else {
@@ -116,9 +116,9 @@ func (s *Squash) Run() (string, error) {
 	dockerAPIVersion, _ := version.NewVersion(dockerVersion.APIVersion)
 
 	var img ImageInterface
-	//留着拓展
+
 	if dockerAPIVersion.GreaterThanOrEqual(minVersion) {
-		img = NewOCIImage(s)
+		img = NewV2Image(s)
 	}
 	s.logs.Println("Squashing image:", s.image)
 	if s.outputPath != "" {

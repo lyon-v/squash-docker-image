@@ -2,6 +2,7 @@
 package image
 
 import (
+	"os"
 	"time"
 )
 
@@ -123,4 +124,9 @@ type Metadata struct {
 	DiffIDs            []string
 	SquashID           string
 	Comment            string
+}
+
+type FileWithPath struct {
+	Path string
+	Info os.FileInfo
 }
