@@ -15,10 +15,10 @@
                 "-t=newimage:gosquash",
                 // "--squash-cfg=default-squash.cfg",
                 "-f=4",
-                "4",
                 "-d=tmp",
+                "-i=registry.cnbita.com:5000/wuliang/debug-full-feat:v1"
                 // "-i=registry.cnbita.com:5000/user-images/autotest-his:v3"
-                "-i=lyonv/ubuntubs:latest"
+                // "-i=lyonv/ubuntubs:latest"
             ]
         }
     ]

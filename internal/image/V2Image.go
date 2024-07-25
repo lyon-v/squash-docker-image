@@ -278,6 +278,9 @@ func (im *V2Image) Copy(src, dest string, records map[string]int) (int, error) {
 // Helper function to Copy a symlink from src to dest
 func (im *V2Image) CopySymlink(src, dest string, records map[string]int) (int, error) {
 
+	if _, ok := records[src]; ok {
+		return 1, nil
+	}
 	linkTarget, err := os.Readlink(src)
 	if err != nil {
 		return 0, fmt.Errorf("failed to read symlink: %w", err)
@@ -286,17 +289,20 @@ func (im *V2Image) CopySymlink(src, dest string, records map[string]int) (int, e
 	absDestDir := filepath.Dir(dest)
 	var absLinkTarget string
 	var desLinkTarget string
-	absLinkTarget = filepath.Join(im.TmpLayerDir, linkTarget)
-	desLinkTarget = filepath.Join(im.MergeDir, linkTarget)
+
+	if strings.HasPrefix(linkTarget, ".") {
+		absLinkTarget = filepath.Join(absSrcDir, linkTarget)
+		desLinkTarget = filepath.Join(absDestDir, linkTarget)
+	} else {
+		absLinkTarget = filepath.Join(im.TmpLayerDir, linkTarget)
+		desLinkTarget = filepath.Join(im.MergeDir, linkTarget)
+	}
 
 	if !PathExists(absLinkTarget) {
 		absLinkTarget = filepath.Join(absSrcDir, linkTarget)
 		desLinkTarget = filepath.Join(absDestDir, linkTarget)
 	}
 
-	if strings.Contains(absLinkTarget, "etc/alternatives/pager") {
-		fmt.Print("")
-	}
 	if !PathExists(absLinkTarget) {
 		CreateSymlink(linkTarget, dest)
 		return 0, nil
