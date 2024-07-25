@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -215,36 +216,43 @@ func (im *V2Image) squashLayers() {
 			name := file.Info.Name()
 
 			dirpath1 := NormalizePath(filepath.Dir(file.Path))
-
+			destdir := filepath.Join(im.MergeDir, dirpath1[len(im.TmpLayerDir):])
 			if name == ".wh..wh..opq" {
-				dirpath2 := filepath.Join(im.MergeDir, dirpath1[len(im.TmpLayerDir):])
-				if flag, _ := HasFiles(dirpath2); flag {
-					os.RemoveAll(dirpath2)
+				if flag, _ := HasFiles(destdir); flag {
+					os.RemoveAll(destdir)
 				} else {
-					CopyFile(file.Path, filepath.Join(dirpath2, name), layerRecords)
+					CreateWhiteoutFile(filepath.Join(destdir, name))
 				}
 
 			} else if strings.HasPrefix(name, ".wh.") {
-				destpath := filepath.Join(im.MergeDir, dirpath1[len(im.TmpLayerDir):], name[len(".wh."):])
+				destpath := filepath.Join(destdir, name[len(".wh."):])
 				if PathExists(destpath) {
 					os.RemoveAll(destpath)
 				} else {
-					CopyFile(filepath.Join(dirpath1, name), destpath, layerRecords)
+					CreateWhiteoutFile(filepath.Join(destdir, name))
 				}
 			}
 		}
-		for _, file := range refiles {
-			sourcePath := NormalizePath(file.Path)
+		var recordsMutex sync.Mutex
+		var wg sync.WaitGroup
 
+		for k, file := range refiles {
+			fmt.Printf("==>layer:[%d] all regular files %d, current is %d， path is: %s \n", i, len(refiles), k, file.Path)
+			sourcePath := NormalizePath(file.Path)
 			destPath := filepath.Join(im.MergeDir, file.Path[len(im.TmpLayerDir):])
 
-			_, err := im.Copy(sourcePath, destPath, layerRecords)
-			if err != nil {
-				log.Fatalf("Error Copying file: %s , %v", sourcePath, err)
-			}
-
+			wg.Add(1)
+			go func(src, dest string) {
+				defer wg.Done()
+				recordsMutex.Lock()
+				_, err := im.Copy(src, dest, layerRecords)
+				recordsMutex.Unlock()
+				if err != nil {
+					log.Fatalf("Error Copying file: %s , %v", src, err)
+				}
+			}(sourcePath, destPath)
 		}
-
+		wg.Wait()
 	}
 
 	// Package the im.MergeDir directory into a tar file.
@@ -281,6 +289,8 @@ func (im *V2Image) CopySymlink(src, dest string, records map[string]int) (int, e
 	if _, ok := records[src]; ok {
 		return 1, nil
 	}
+	records[src] += 1
+
 	linkTarget, err := os.Readlink(src)
 	if err != nil {
 		return 0, fmt.Errorf("failed to read symlink: %w", err)
@@ -308,24 +318,8 @@ func (im *V2Image) CopySymlink(src, dest string, records map[string]int) (int, e
 		return 0, nil
 	}
 
-	records[src] += 1
-
-	linkTargetInfo, err := os.Lstat(absLinkTarget)
-	if err != nil {
-		return 0, fmt.Errorf("failed to stat symlink target: %w", err)
-	}
-
 	var i int
-	if linkTargetInfo.Mode()&os.ModeSymlink != 0 {
-		// Recursively handle the nested symlink
-		i, err = im.CopySymlink(absLinkTarget, desLinkTarget, records)
-	} else if linkTargetInfo.IsDir() {
-		// If the target is a directory, Copy the directory structure
-		i, err = im.CopyDir(absLinkTarget, desLinkTarget, records)
-	} else {
-		// If the target is a file, Copy the file
-		i, err = CopyFile(absLinkTarget, desLinkTarget, records)
-	}
+	i, err = im.Copy(absLinkTarget, desLinkTarget, records)
 	if err != nil {
 		return i, err
 	}
@@ -340,7 +334,7 @@ func (im *V2Image) CopyDir(src, dest string, records map[string]int) (count int,
 	if _, ok := records[src]; ok {
 		return 1, nil
 	}
-
+	records[src] += 1
 	dirs, err := os.ReadDir(src)
 	if err != nil {
 		return 0, fmt.Errorf("failed to read source directory: %w", err)
@@ -349,32 +343,16 @@ func (im *V2Image) CopyDir(src, dest string, records map[string]int) (count int,
 	if err := os.MkdirAll(dest, 0755); err != nil {
 		return 0, fmt.Errorf("failed to create destination directory: %w", err)
 	}
-
 	for _, dir := range dirs {
 		srcPath := filepath.Join(src, dir.Name())
 		destPath := filepath.Join(dest, dir.Name())
 
-		if dir.IsDir() {
-			countSub, err := im.CopyDir(srcPath, destPath, records)
-			if err != nil {
-				return 0, err
-			}
-			count += countSub
-		} else if dir.Type()&os.ModeSymlink != 0 {
-			countSub, err := im.CopySymlink(srcPath, destPath, records)
-			if err != nil {
-				return 0, err
-			}
-			count += countSub
-		} else {
-			countSub, err := CopyFile(srcPath, destPath, records)
-			if err != nil {
-				return 0, err
-			}
-			count += countSub
+		countSub, err := im.Copy(srcPath, destPath, records)
+		if err != nil {
+			return 0, err
 		}
+		count += countSub
 	}
-	records[src] += 1
 	return count, nil
 }
 
@@ -1273,6 +1251,25 @@ func (im *V2Image) ExportTarArchive(outputPath string) error {
 	}
 
 	im.Logger.Infof("Image available at '%s'", outputPath)
+
+	return nil
+}
+
+func CreateWhiteoutFile(path string) error {
+	// Create the directory if it doesn't exist
+	dir := filepath.Dir(path)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+			return fmt.Errorf("failed to create directory: %w", err)
+		}
+	}
+
+	// Create the empty file
+	file, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer file.Close()
 
 	return nil
 }

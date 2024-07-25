@@ -68,7 +68,7 @@ func CopyFile(src, dest string, records map[string]int) (int, error) {
 	if _, ok := records[src]; ok {
 		return 1, nil
 	}
-
+	records[src] += 1
 	source, err := os.Open(src)
 	if err != nil {
 		return 0, fmt.Errorf("failed to open source file: %w", err)
@@ -85,7 +85,6 @@ func CopyFile(src, dest string, records map[string]int) (int, error) {
 		return 0, fmt.Errorf("failed to Copy file content: %w", err)
 	}
 
-	records[src] += 1
 	return 1, nil
 }
 
